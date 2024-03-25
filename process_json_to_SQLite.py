@@ -1,13 +1,12 @@
-import json
 import datetime
+import json
 import logging
-from peewee import Model, SqliteDatabase, CharField, TextField, DateTimeField
+
+from peewee import CharField, DateTimeField, Model, SqliteDatabase, TextField
 from playhouse.shortcuts import model_to_dict
-from pathlib import Path
-import regex as re
 
 # Define the SQLite database
-db = SqliteDatabase('rulings.db')
+db = SqliteDatabase("rulings.db")
 
 
 # Define the model for the rulings, matching the schema in assets/rulings_schema.json
@@ -28,18 +27,18 @@ db.connect()
 db.create_tables([Ruling])
 
 # Load the schema and use it to validate data
-with open('assets/rulings_schema.json', 'r') as schema_file:
+with open("assets/rulings_schema.json") as schema_file:
     schema = json.load(schema_file)
 
 
 # Function to validate data against the schema
-def validate_data(data, schema):
+def validate_data(data, schema) -> None:
     # Implement validation logic here
     pass
 
 
 # Function to process and insert data into the database
-def process_and_insert_data(data):
+def process_and_insert_data(data) -> None:
     for item in data:
         # Validate the data against the schema
         if not validate_data(item, schema):
@@ -48,23 +47,25 @@ def process_and_insert_data(data):
 
         # Create a new Ruling object and save it to the database
         ruling = Ruling.create(
-            card_name=item['card_name'],
-            type=item['type'],
-            text=item['text'],
-            source_updated=datetime.datetime.strptime(item['source']['updated'], '%d %B %Y') if item['source'][
-                'updated'] else None,
-            source_type=item['source']['type'],
-            source_version=item['source']['version']
+            card_name=item["card_name"],
+            type=item["type"],
+            text=item["text"],
+            source_updated=datetime.datetime.strptime(
+                item["source"]["updated"], "%d %B %Y")
+            if item["source"]["updated"]
+            else None,
+            source_type=item["source"]["type"],
+            source_version=item["source"]["version"],
         )
         ruling.save()
 
 
 # Load the processed data
-with open('assets/processed_data.json', 'r') as data_file:
+with open("assets/processed_data.json") as data_file:
     processed_data = json.load(data_file)
 
 # Process and insert the data into the database
-for card_name, rulings in processed_data.items():
+for _card_name, rulings in processed_data.items():
     for ruling in rulings:
         process_and_insert_data(ruling)
 
@@ -74,6 +75,7 @@ db.close()
 
 # Additional functions for querying and manipulating the database can be added here
 
+
 # Example function to query the database
 def query_rulings_by_card_name(card_name):
     query = Ruling.select().where(Ruling.card_name == card_name)
@@ -81,9 +83,9 @@ def query_rulings_by_card_name(card_name):
 
 
 # Example usage of the query function
-if __name__ == '__main__':
+if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    example_card_name = 'Example Card'
+    example_card_name = "Example Card"
     example_rulings = query_rulings_by_card_name(example_card_name)
     for ruling in example_rulings:
         print(ruling)

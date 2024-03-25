@@ -1,16 +1,14 @@
 import json
 import logging
+from enum import Enum, auto
 from pathlib import Path
 from pprint import pp
-from typing import List
-from pydantic import BaseModel
-from typing import Optional
-from enum import Enum, auto
-from bs4 import BeautifulSoup, Tag
+
+import bs4
 import markdown_it as md_it
 import markdownify
-import bs4
 from bs4 import BeautifulSoup
+from pydantic import BaseModel
 
 from symbol import postProcess, tokenize
 
@@ -63,11 +61,11 @@ class Ruling(BaseModel):
         arbitrary_types_allowed = True
 
     ruling_type: RulingType
-    question: Optional[str] = None
-    answer: Optional[str] = None
-    content: Optional[List[str]] = None
+    question: str | None = None
+    answer: str | None = None
+    content: list[str] | None = None
 
-    def __init__(self, **data):
+    def __init__(self, **data) -> None:
         super().__init__(**data)
         if self.ruling_type in [RulingType.QUESTION, RulingType.ANSWER] and not self.content:
             self.content = [self.question, self.answer]
@@ -129,7 +127,7 @@ def convert_json_to_html(faq_data: dict[str, dict[str, str]]) -> dict[str, Beaut
     }
 
 
-def print_token_stream(tokens: List[md_it.token.Token], nest_level: int = 0) -> None:
+def print_token_stream(tokens: list[md_it.token.Token], nest_level: int = 0) -> None:
     for token in tokens:
         for i in range(nest_level):
             print(f"{' ' * 2 * i}Ã¢ÂÂ¾Ã¢ÂÂ¾Ã¢ÂÂ¾|")
@@ -171,7 +169,7 @@ def process_markdown_faq_data(markdown_faq_data: dict[str, str]) -> None:
         print(f"\n{'=' * 80}\n\n")
 
 
-def process_ruling_html(ruling: BeautifulSoup) -> List[Ruling]:
+def process_ruling_html(ruling: BeautifulSoup) -> list[Ruling]:
     rulings = []
     current_question = None
     for strong in ruling.find_all("strong"):
@@ -179,7 +177,7 @@ def process_ruling_html(ruling: BeautifulSoup) -> List[Ruling]:
         if stripped_strong in TEXT_TO_RULING_TYPE:
             between = []
             for nxt in strong.next_siblings:
-                if isinstance(nxt, bs4.Tag) or isinstance(nxt, bs4.NavigableString):
+                if isinstance(nxt, bs4.Tag | bs4.NavigableString):
                     if isinstance(nxt, bs4.Tag) and nxt.name == "strong":
                         break
                     content_str = str(nxt).strip()
@@ -187,22 +185,33 @@ def process_ruling_html(ruling: BeautifulSoup) -> List[Ruling]:
                         between.append(content_str)
             ruling_type = TEXT_TO_RULING_TYPE[stripped_strong]
             if ruling_type == RulingType.QUESTION:
-                current_question = ' '.join(between)
+                current_question = " ".join(between)
             elif ruling_type == RulingType.ANSWER and current_question is not None:
-                rulings.append(Ruling(ruling_type=RulingType.QUESTION, question=current_question, answer=' '.join(between)))
+                rulings.append(
+                    Ruling(
+                        ruling_type=RulingType.QUESTION,
+                        question=current_question,
+                        answer=" ".join(between),
+                    )
+                )
                 current_question = None
             else:
-                rulings.append(Ruling(ruling_type=ruling_type, content=between))
+                rulings.append(
+                    Ruling(ruling_type=ruling_type, content=between))
     return rulings
 
 
-def process_html_faq_data(html_faq_data: dict[str, BeautifulSoup]) -> dict[str, List[BeautifulSoup]]:
+def process_html_faq_data(
+    html_faq_data: dict[str, BeautifulSoup],
+) -> dict[str, list[BeautifulSoup]]:
     processed_data = {}
 
     for card_code, rulings_html in html_faq_data.items():
         # Find all list item tags and create a new BeautifulSoup object for each list item's contents
         rulings = (
-            BeautifulSoup("".join(str(content) for content in list_item.contents), features="html.parser")
+            BeautifulSoup(
+                "".join(str(content) for content in list_item.contents), features="html.parser"
+            )
             for list_item in rulings_html.find_all("li")
         )
 

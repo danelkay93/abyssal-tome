@@ -1,34 +1,26 @@
-import imghdr
-import itertools
+import asyncio
+import json
 import logging
 import os
-import random
 import sys
-from base64 import b64encode, urlsafe_b64encode, urlsafe_b64decode
-from copy import deepcopy, copy
+from base64 import b64encode, urlsafe_b64decode, urlsafe_b64encode
+from copy import deepcopy
 from enum import StrEnum, unique
 from pathlib import Path
 
+import clipman
 import flet as ft
 import flet_fastapi
-import asyncio
-import json
-import clipman
-
 import regex as reg
-from functools import singledispatch
-
 import requests
 from gql import Client, gql
 from gql.transport.aiohttp import AIOHTTPTransport as GQL_Transport
 from starlette.middleware.cors import CORSMiddleware
 from tqdm.auto import tqdm
-from whoosh.index import create_in
-
-from whoosh.fields import Schema, TEXT, ID
+from whoosh.fields import ID, TEXT, Schema
 from whoosh.index import create_in, open_dir
 from whoosh.writing import AsyncWriter
-from whoosh.qparser import QueryParser
+
 from utils import debounce
 
 logging.basicConfig(level=logging.WARNING, stream=sys.stdout)
@@ -44,10 +36,18 @@ clipman.init()
 # from gql.utilities.build_client_schema import GraphQLSchema
 
 
-schema = Schema(card_name=ID(stored=True), ruling_text=TEXT, card_code=ID(stored=True), ruling_type=TEXT, ruling_question=TEXT, ruling_answer=TEXT)
+schema = Schema(
+    card_name=ID(stored=True),
+    ruling_text=TEXT,
+    card_code=ID(stored=True),
+    ruling_type=TEXT,
+    ruling_question=TEXT,
+    ruling_answer=TEXT,
+)
 if not Path("indexdir").exists():
     Path("indexdir").mkdir()
 ix = create_in("indexdir", schema)
+
 
 @unique
 class EntryType(StrEnum):
@@ -88,8 +88,7 @@ TAG_TO_LETTER = {
     "action": "i",
 }
 
-lookahead_markdown = \
-    r"""
+lookahead_markdown = r"""
 \[
   (?P<link_text>                   # Start capturing the link text
     [^\[\]]+                  # Match any character except brackets (simplification)
@@ -115,15 +114,24 @@ lookahead_markdown = \
 """
 LOOKAHEAD_PATTERN = reg.compile(lookahead_markdown)
 
-LINK_PATTERN = reg.compile(r"\[(?P<link_text>[^\[\]]+)\](?=\([^\)]+\))\((?P<link_url>[^\(\)]+)\)")
+LINK_PATTERN = reg.compile(
+    r"\[(?P<link_text>[^\[\]]+)\](?=\([^\)]+\))\((?P<link_url>[^\(\)]+)\)")
 TAG_PATTERN = reg.compile(
-    r"(?P<tag>" + r"|".join(reg.escape(f"[{tag}]", special_only=True) for tag in TAG_TO_LETTER) + ")")
+    r"(?P<tag>"
+    + r"|".join(reg.escape(f"[{tag}]", special_only=True)
+                for tag in TAG_TO_LETTER)
+    + ")"
+)
 print(f"{TAG_PATTERN=}")
 BOLD_ITALIC_PATTERN = reg.compile(r"\*\*\*(?P<bold_italic>.*?)\*\*\*")
 BOLD_PATTERN = reg.compile(r"\*\*(?P<bolded>.*?)\*\*")
 ITALIC_PATTERN = reg.compile(r"\*(?P<italics>.*?)\*")
 ALL_PATTERN = "|".join(
-    [pat.pattern for pat in (LINK_PATTERN, TAG_PATTERN, BOLD_ITALIC_PATTERN, BOLD_PATTERN, ITALIC_PATTERN)])
+    [
+        pat.pattern
+        for pat in (LINK_PATTERN, TAG_PATTERN, BOLD_ITALIC_PATTERN, BOLD_PATTERN, ITALIC_PATTERN)
+    ]
+)
 ALL_PATTERN = reg.compile(ALL_PATTERN)
 print(ALL_PATTERN.pattern)
 transport = GQL_Transport(url="https://gapi.arkhamcards.com/v1/graphql")
@@ -132,18 +140,24 @@ gql_client = Client(transport=transport, fetch_schema_from_transport=True)
 
 def load_json_data() -> dict:
     logging.info("Loading JSON data from file.")
-    with open(Path("assets/processed_data.json"), "r", encoding="utf-8") as file:
+    with open(Path("assets/processed_data.json"), encoding="utf-8") as file:
         data = json.load(file)
     logging.info("JSON data loaded successfully.")
     return data
 
 
 async def highlight_text(span: ft.TextSpan, search_term: str) -> list[ft.TextSpan]:
-    term_pattern = reg.escape(search_term, special_only=True, literal_spaces=True)
-    for tag in TAG_TO_LETTER.keys():
-        if search_term.lower() in tag and span.style and span.style.font_family == "Arkham Icons" and span.text == \
-                TAG_TO_LETTER[tag]:
-            span.style.bgcolor = ft.colors.with_opacity(0.5, ft.colors.TERTIARY)
+    term_pattern = reg.escape(
+        search_term, special_only=True, literal_spaces=True)
+    for tag in TAG_TO_LETTER:
+        if (
+            search_term.lower() in tag
+            and span.style
+            and span.style.font_family == "Arkham Icons"
+            and span.text == TAG_TO_LETTER[tag]
+        ):
+            span.style.bgcolor = ft.colors.with_opacity(
+                0.5, ft.colors.TERTIARY)
             return [span]
     reg.compile(term_pattern, reg.IGNORECASE)
     span_text = span.text
@@ -160,7 +174,9 @@ async def highlight_text(span: ft.TextSpan, search_term: str) -> list[ft.TextSpa
     # logging.warning(f"highlight_text called with term: {term} and {len(span_text) if span_text else None} characters.")
     remaining_text = span_text
 
-    while match := reg.search(term_pattern, remaining_text.lower(), concurrent=True):  # partial=True):
+    while match := reg.search(
+        term_pattern, remaining_text.lower(), concurrent=True
+    ):  # partial=True):
         start, end = match.span()
         if start > 0:
             pre_span = deepcopy(span)
@@ -168,11 +184,9 @@ async def highlight_text(span: ft.TextSpan, search_term: str) -> list[ft.TextSpa
             spans.append(pre_span)
 
         mid_span = deepcopy(span)
-        mid_span.text = remaining_text[start: end]
+        mid_span.text = remaining_text[start:end]
         mid_span.style = highlight_style
-        spans.append(
-            mid_span
-        )
+        spans.append(mid_span)
 
         remaining_text = remaining_text[end:]
         if not remaining_text:
@@ -195,11 +209,10 @@ async def highlight_spans(text_spans: list[ft.TextSpan], search_term: str) -> li
     return highlighted_spans
 
 
-def append_span(spans, text, style=None, on_click=None):
+def append_span(spans, text, style=None, on_click=None) -> None:
     if text:
-        spans.append(
-            ft.TextSpan(text=text, style=style or ft.TextStyle(), on_click=on_click)
-        )
+        spans.append(ft.TextSpan(
+            text=text, style=style or ft.TextStyle(), on_click=on_click))
 
 
 async def replace_special_tags(page: ft.Page, text: str) -> list[ft.TextSpan]:
@@ -235,7 +248,8 @@ async def replace_special_tags(page: ft.Page, text: str) -> list[ft.TextSpan]:
             # print(f"mid_span.text: {mid_span.text}")
         elif tag := groups.get("tag"):
             # print(f"Tag match: {tag}")
-            mid_span.text = TAG_TO_LETTER[tag.replace("[", "").replace("]", "")]
+            mid_span.text = TAG_TO_LETTER[tag.replace(
+                "[", "").replace("]", "")]
             mid_span.style = ft.TextStyle(size=20, font_family="Arkham Icons")
             mid_span.data = tag
 
@@ -273,11 +287,11 @@ async def replace_special_tags(page: ft.Page, text: str) -> list[ft.TextSpan]:
     return spans
 
 
-async def on_card_click(event: ft.ControlEvent, page: ft.Page, card_id: str):
+async def on_card_click(event: ft.ControlEvent, page: ft.Page, card_id: str) -> None:
     logging.info(f"Card clicked with ID: {card_id}")
     image_url = await retrieve_image_url(card_id)
 
-    async def close_dialog():
+    async def close_dialog() -> None:
         dialog.open = False  # Close the Dialog
         await page.close_dialog_async()
         page.dialog = None
@@ -291,7 +305,8 @@ async def on_card_click(event: ft.ControlEvent, page: ft.Page, card_id: str):
 
     # Close button to dismiss the Dialog
     close_button = ft.IconButton(
-        icon=ft.icons.CLOSE, on_click=lambda e: asyncio.create_task(close_dialog())
+        icon=ft.icons.CLOSE, on_click=lambda e: asyncio.create_task(
+            close_dialog())
     )
     # Dialog containing the Card and the Close button
     dialog_content = ft.Card(image_card, expand=True)
@@ -319,9 +334,11 @@ async def retrieve_image_binary(image_url: str) -> str:
     # If it is, display the image in an AlertDialog
     image = requests.get(image_url)
     if image.status_code != 200:
-        logging.error(f"Image URL: {image_url} returned status code: {image.status_code}")
+        logging.error(
+            f"Image URL: {image_url} returned status code: {image.status_code}")
     else:
-        logging.info(f"Image URL: {image_url} returned status code: {image.status_code}")
+        logging.info(
+            f"Image URL: {image_url} returned status code: {image.status_code}")
     return b64encode(image.content).decode("ascii")
 
 
@@ -370,35 +387,46 @@ async def retrieve_card_text(card_id: str) -> dict:
     return results
 
 
-async def copy_ruling_to_clipboard(event: ft.ControlEvent, ruling_text: str, button: ft.ElevatedButton):
+async def copy_ruling_to_clipboard(
+    event: ft.ControlEvent, ruling_text: str, button: ft.ElevatedButton
+) -> None:
     logging.info("Copying ruling to clipboard.")
     clipman.copy(ruling_text)
-    clip.style.shadow = ft.BoxShadow(spread_radius=-1, blur_radius=10, color=ft.colors.BLACK, offset=ft.Offset(2, 2),
-                                     blur_style=ft.ShadowBlurStyle.NORMAL)
+    clip.style.shadow = ft.BoxShadow(
+        spread_radius=-1,
+        blur_radius=10,
+        color=ft.colors.BLACK,
+        offset=ft.Offset(2, 2),
+        blur_style=ft.ShadowBlurStyle.NORMAL,
+    )
     await button.update_async()
     await asyncio.sleep(0.3)
     clip.style.shadow = None
     await button.update_async()
 
 
-async def go_to_card_page(event: ft.ControlEvent, page: ft.Page, card_code: str, card_name: str):
-    await page.go_async(f"/card/{urlsafe_b64encode(card_name.encode('ascii')).decode('ascii')}/{card_code}")
+async def go_to_card_page(
+    event: ft.ControlEvent, page: ft.Page, card_code: str, card_name: str
+) -> None:
+    await page.go_async(
+        f"/card/{urlsafe_b64encode(card_name.encode('ascii')).decode('ascii')}/{card_code}"
+    )
     await page.update_async()
 
 
 class SearchController:
-    def __init__(self, page: ft.Page, data: dict[str, list[dict]]):
+    def __init__(self, page: ft.Page, data: dict[str, list[dict]]) -> None:
         logging.info("Initializing SearchView.")
         self.page = page
         self.page_content: ft.Column = page.views[0].controls[1]
         self.data = data
 
     async def create_text_spans(
-            self,
-            ruling_type: EntryType,
-            search_term: str,
-            ruling_text: str = "",
-            question_or_answer: QAType = None,
+        self,
+        ruling_type: EntryType,
+        search_term: str,
+        ruling_text: str = "",
+        question_or_answer: QAType = None,
     ) -> list[ft.TextSpan]:
         if not ruling_text:
             logging.warning(
@@ -426,14 +454,18 @@ class SearchController:
         ruling_text_control_spans = await replace_special_tags(self.page, ruling_text)
         # Highlight the spans that match the search term
         if search_term:
-            ruling_text_control_spans = await highlight_spans(ruling_text_control_spans, search_term)
+            ruling_text_control_spans = await highlight_spans(
+                ruling_text_control_spans, search_term
+            )
 
         text_spans.extend(ruling_text_control_spans)
 
         return text_spans
 
     async def update_search_view(self, search_term: str) -> None:
-        async def create_copy_button(ruling_text: str, ruling_question: str, ruling_answer: str) -> ft.IconButton:
+        async def create_copy_button(
+            ruling_text: str, ruling_question: str, ruling_answer: str
+        ) -> ft.IconButton:
             # clip = ft.TextSpan(
             #     text=u"📋",
             #     style=ft.TextStyle(size=20),
@@ -442,37 +474,53 @@ class SearchController:
             #         copy_ruling_to_clipboard(e, rules_text, clip)),
             #
             # )
-            clip = ft.IconButton(
+            return ft.IconButton(
                 icon=ft.icons.COPY,
                 icon_size=20,
                 on_click=lambda e,
-                                rules_text=ruling_text or fr"Q: {ruling_question}\n A: {ruling_answer}": asyncio.create_task(
-                    copy_ruling_to_clipboard(e, rules_text, clip)),
+                rules_text=ruling_text
+                or rf"Q: {ruling_question}\n A: {ruling_answer}": asyncio.create_task(
+                    copy_ruling_to_clipboard(e, rules_text, clip)
+                ),
                 style=ft.ButtonStyle(
                     elevation={"pressed": 0, "": 1},
                     animation_duration=500,
-                    shape=ft.RoundedRectangleBorder(radius=ft.border_radius.all(10)),
-                )
+                    shape=ft.RoundedRectangleBorder(
+                        radius=ft.border_radius.all(10)),
+                ),
             )
-            return clip
 
         self.page_content.scroll = None
         self.page_content.controls.clear()
 
         # logging.info(f"Updating search view with term: {search_term}")
-        content_controls = ft.ListView(controls=[],
-                                       expand=True)  # This will hold all the controls to be added to the content
+        content_controls = ft.ListView(
+            controls=[], expand=True
+        )  # This will hold all the controls to be added to the content
         if not search_term:
-            logging.warning("update_search_view called with empty search_term.")
+            logging.warning(
+                "update_search_view called with empty search_term.")
 
         # Sort the data by card name
         # self.data = dict(sorted(self.data.items()))
 
-        for card_name, card_rulings in tqdm(self.data.items(), total=len(self.data), position=0, leave=True, desc="Processing all cards"):
-            no_rulings = False
+        for card_name, card_rulings in tqdm(
+            self.data.items(),
+            total=len(self.data),
+            position=0,
+            leave=True,
+            desc="Processing all cards",
+        ):
             card_added = False
             text = []  # Initialize the text list to hold Text controls for each ruling
-            for i, ruling in tqdm(enumerate(card_rulings), disable=False, total=len(card_rulings), position=1, leave=False, desc="Processing rulings"):
+            for _i, ruling in tqdm(
+                enumerate(card_rulings),
+                disable=False,
+                total=len(card_rulings),
+                position=1,
+                leave=False,
+                desc="Processing rulings",
+            ):
                 ruling_content = ruling.get("content", {})
                 ruling_type = ruling.get("type", EntryType.UNKNOWN)
                 ruling_text = ruling_content.get("text", "")
@@ -483,18 +531,19 @@ class SearchController:
                 text_spans = []
 
                 if ruling_type == EntryType.QUESTION_ANSWER and (
-                        not ruling_question or not ruling_answer
+                    not ruling_question or not ruling_answer
                 ):
                     # logging.warning(
                     #     f"Question/Answer ruling is missing content for card: {card_name=} {ruling_question=} {ruling_answer=}")
                     ...
 
                 if (
-                        not ruling_text.strip()
-                        and not ruling_question.strip()
-                        and not ruling_answer.strip()
+                    not ruling_text.strip()
+                    and not ruling_question.strip()
+                    and not ruling_answer.strip()
                 ):
-                    logging.warning(f"Ruling content is empty for card: {card_name}")
+                    logging.warning(
+                        f"Ruling content is empty for card: {card_name}")
                     continue
 
                 # with ix.searcher() as searcher:
@@ -505,7 +554,11 @@ class SearchController:
                 #     results = searcher.search(query).docs() or searcher.search(query2).docs() or searcher.search(query3).docs() or searcher.search(query4).docs()
                 #     if not results:
                 #         continue
-                if search_term.lower() not in ruling_text.lower() and search_term.lower() not in ruling_question.lower() and search_term.lower() not in ruling_answer.lower():
+                if (
+                    search_term.lower() not in ruling_text.lower()
+                    and search_term.lower() not in ruling_question.lower()
+                    and search_term.lower() not in ruling_answer.lower()
+                ):
                     continue
 
                 copy_button = await create_copy_button(ruling_text, ruling_question, ruling_answer)
@@ -519,9 +572,7 @@ class SearchController:
                         text_spans.append(ft.TextSpan(ruling_text))
                     case EntryType.ERRATUM | EntryType.CLARIFICATION:
                         text_spans.extend(
-                            await self.create_text_spans(
-                                ruling_type, search_term, ruling_text
-                            )
+                            await self.create_text_spans(ruling_type, search_term, ruling_text)
                         )
                     case EntryType.QUESTION_ANSWER:
                         if ruling_question:
@@ -549,22 +600,40 @@ class SearchController:
                     card_added = True
                     text.append(
                         ft.Text(
-                            spans=[ft.TextSpan(card_name, style=ft.TextStyle(color=ft.colors.ON_SURFACE,
-                                                                             decoration_color=ft.colors.ON_SURFACE,
-                                                                             decoration=ft.TextDecoration.UNDERLINE),
-                                               on_click=lambda e, name=card_name,
-                                                               card_code=card_id: asyncio.create_task(
-                                                   go_to_card_page(e, self.page, card_code, name)))],
+                            spans=[
+                                ft.TextSpan(
+                                    card_name,
+                                    style=ft.TextStyle(
+                                        color=ft.colors.ON_SURFACE,
+                                        decoration_color=ft.colors.ON_SURFACE,
+                                        decoration=ft.TextDecoration.UNDERLINE,
+                                    ),
+                                    on_click=lambda e,
+                                    name=card_name,
+                                    card_code=card_id: asyncio.create_task(
+                                        go_to_card_page(
+                                            e, self.page, card_code, name)
+                                    ),
+                                )
+                            ],
                             theme_style=ft.TextThemeStyle.TITLE_MEDIUM,
                             selectable=True,
                         )
                     )
 
                 copy_button = await create_copy_button(ruling_text, ruling_question, ruling_answer)
-                text.append(ft.Container(
-                    ft.Row([copy_button, ft.Text(spans=text_spans, selectable=True, expand=True)], scroll=None,
-                           expand=True)))
-                col = ft.Column(text + [ft.Divider()] if True else [], scroll=None)
+                text.append(
+                    ft.Container(
+                        ft.Row(
+                            [copy_button, ft.Text(
+                                spans=text_spans, selectable=True, expand=True)],
+                            scroll=None,
+                            expand=True,
+                        )
+                    )
+                )
+                col = ft.Column([*text, ft.Divider()]
+                                if True else [], scroll=None)
                 # col = ft.Column(text + ([ft.Divider()] if (i + 1) < len(card_rulings) else []), scroll=None)
 
                 if text:
@@ -572,17 +641,21 @@ class SearchController:
                     text = []
 
             # if card_added:
-                # content_controls.controls.append(ft.Divider(thickness=5))
+            # content_controls.controls.append(ft.Divider(thickness=5))
 
         # Remove the progress ring and text
         self.page_content.controls.clear()
-        self.page_content.controls.append(ft.Text(spans=
-        [
-            ft.TextSpan("Search results for "),
-            ft.TextSpan(f'"{search_term}":', )
-        ],
-            theme_style=ft.TextThemeStyle.HEADLINE_MEDIUM,
-        ))
+        self.page_content.controls.append(
+            ft.Text(
+                spans=[
+                    ft.TextSpan("Search results for "),
+                    ft.TextSpan(
+                        f'"{search_term}":',
+                    ),
+                ],
+                theme_style=ft.TextThemeStyle.HEADLINE_MEDIUM,
+            )
+        )
 
         # After processing all cards, if no content_controls were added, it means no results were found
         if not content_controls.controls:
@@ -595,22 +668,27 @@ class SearchController:
         await self.page.update_async()
         await self.page_content.update_async()
 
-    async def get_rulings_for_card(self, page: ft.Page, card_name: str, card_code: str, image_binary: str,
-                                   card_text) -> None:
-        async def create_copy_button(ruling_text: str, ruling_question: str, ruling_answer: str) -> ft.IconButton:
-            clip = ft.IconButton(
+    async def get_rulings_for_card(
+        self, page: ft.Page, card_name: str, card_code: str, image_binary: str, card_text
+    ) -> None:
+        async def create_copy_button(
+            ruling_text: str, ruling_question: str, ruling_answer: str
+        ) -> ft.IconButton:
+            return ft.IconButton(
                 icon=ft.icons.COPY,
                 icon_size=20,
                 on_click=lambda e,
-                                rules_text=ruling_text or fr"Q: {ruling_question}\n A: {ruling_answer}": asyncio.create_task(
-                    copy_ruling_to_clipboard(e, rules_text, clip)),
+                rules_text=ruling_text
+                or rf"Q: {ruling_question}\n A: {ruling_answer}": asyncio.create_task(
+                    copy_ruling_to_clipboard(e, rules_text, clip)
+                ),
                 style=ft.ButtonStyle(
                     elevation={"pressed": 0, "": 1},
                     animation_duration=500,
-                    shape=ft.RoundedRectangleBorder(radius=ft.border_radius.all(10)),
-                )
+                    shape=ft.RoundedRectangleBorder(
+                        radius=ft.border_radius.all(10)),
+                ),
             )
-            return clip
 
         card_rulings = self.data[card_name]
         print(f"{card_rulings=}")
@@ -621,11 +699,10 @@ class SearchController:
             ruling_text = ruling_content.get("text", "")
             ruling_question = ruling_content.get("question", "")
             ruling_answer = ruling_content.get("answer", "")
-            card_id = ruling.get("card_code", "")
-            source = ruling.get("source", "")
+            ruling.get("card_code", "")
+            ruling.get("source", "")
 
             text_spans = []
-            content_controls = []
 
             copy_button = await create_copy_button(ruling_text, ruling_question, ruling_answer)
             text_spans.append(copy_button)
@@ -637,11 +714,7 @@ class SearchController:
                     )
                     text_spans.append(ft.TextSpan(ruling_text))
                 case EntryType.ERRATUM | EntryType.CLARIFICATION:
-                    text_spans.extend(
-                        await self.create_text_spans(
-                            ruling_type, None, ruling_text
-                        )
-                    )
+                    text_spans.extend(await self.create_text_spans(ruling_type, None, ruling_text))
                 case EntryType.QUESTION_ANSWER:
                     if ruling_question:
                         text_spans.extend(
@@ -666,8 +739,11 @@ class SearchController:
                     text_spans.append(ft.Divider(thickness=10))
 
             copy_button = await create_copy_button(ruling_text, ruling_question, ruling_answer)
-            text.extend([copy_button, ft.Text(spans=text_spans + [ft.TextSpan("\n")], selectable=True)])
-            col = ft.Column(text + [ft.Divider(thickness=5)], scroll=None)
+            text.extend(
+                [copy_button, ft.Text(
+                    spans=[*text_spans, ft.TextSpan("\n")], selectable=True)]
+            )
+            ft.Column([*text, ft.Divider(thickness=5)], scroll=None)
             if text:
                 # content_controls.append(col)
                 # text = []
@@ -677,53 +753,56 @@ class SearchController:
 
 
 class SearchInputController:
-    def __init__(self, page: ft.Page, data: dict[str, list[dict]]):
+    def __init__(self, page: ft.Page, data: dict[str, list[dict]]) -> None:
         logging.info("Initializing SearchInputChanged.")
         self.data = data
         self.page = page
-        
+
     @debounce(1.0)
-    async def search_input_changed(self, event: ft.ControlEvent):
+    async def search_input_changed(self, event: ft.ControlEvent) -> None:
         if search_term := event.control.value:
             search_view = SearchView(self.page, self.data)
             await search_view.update_search_view(search_term)
 
-async def main(page: ft.Page):
+
+async def main(page: ft.Page) -> None:
     print("Main function started.")
     page.title = "FAQ This!"
     page.fonts = {"Arkham Icons": "/fonts/arkham-icons.otf"}
-    page.theme = ft.Theme(color_scheme=ft.ColorScheme(
-        primary="#ff436915",
-        on_primary="#ffffffff",
-        primary_container="#ffc2f18d",
-        on_primary_container="#ff0f2000",
-        secondary="#ff57624a",
-        on_secondary="#ffffffff",
-        secondary_container="#ffdbe7c8",
-        on_secondary_container="#ff151e0b",
-        tertiary="#ff386663",
-        on_tertiary="#ffffffff",
-        tertiary_container="#ffbbece8",
-        on_tertiary_container="#ff00201f",
-        error="#ffba1a1a",
-        error_container="#ffffdad6",
-        on_error="#ffffffff",
-        on_error_container="#ff410002",
-        background="#fffdfcf5",
-        on_background="#ff1b1c18",
-        surface="#fffdfcf5",
-        on_surface="#ff1b1c18",
-        surface_variant="#ffe1e4d5",
-        on_surface_variant="#ff44483d",
-        outline="#ff75796c",
-        on_inverse_surface="#fff2f1e9",
-        inverse_surface="#ff30312c",
-        inverse_primary="#ffa7d474",
-        shadow="#ff000000",
-        surface_tint="#ff436915",
-        outline_variant="#ffc5c8ba",
-        scrim="#ff000000",
-    ))
+    page.theme = ft.Theme(
+        color_scheme=ft.ColorScheme(
+            primary="#ff436915",
+            on_primary="#ffffffff",
+            primary_container="#ffc2f18d",
+            on_primary_container="#ff0f2000",
+            secondary="#ff57624a",
+            on_secondary="#ffffffff",
+            secondary_container="#ffdbe7c8",
+            on_secondary_container="#ff151e0b",
+            tertiary="#ff386663",
+            on_tertiary="#ffffffff",
+            tertiary_container="#ffbbece8",
+            on_tertiary_container="#ff00201f",
+            error="#ffba1a1a",
+            error_container="#ffffdad6",
+            on_error="#ffffffff",
+            on_error_container="#ff410002",
+            background="#fffdfcf5",
+            on_background="#ff1b1c18",
+            surface="#fffdfcf5",
+            on_surface="#ff1b1c18",
+            surface_variant="#ffe1e4d5",
+            on_surface_variant="#ff44483d",
+            outline="#ff75796c",
+            on_inverse_surface="#fff2f1e9",
+            inverse_surface="#ff30312c",
+            inverse_primary="#ffa7d474",
+            shadow="#ff000000",
+            surface_tint="#ff436915",
+            outline_variant="#ffc5c8ba",
+            scrim="#ff000000",
+        )
+    )
 
     page_content = ft.Ref[ft.Column]()
     json_data = load_json_data()
@@ -733,7 +812,9 @@ async def main(page: ft.Page):
     print("Creating index.")
     # Use AsyncWriter to prevent locking issues
     with AsyncWriter(ix) as writer:
-        for card_name, card_rulings in tqdm(json_data.items(), total=len(json_data), position=0, leave=True, desc="Indexing cards"):
+        for card_name, card_rulings in tqdm(
+            json_data.items(), total=len(json_data), position=0, leave=True, desc="Indexing cards"
+        ):
             for ruling in card_rulings:
                 ruling_content = ruling.get("content", {})
                 ruling_type = ruling.get("type", EntryType.UNKNOWN)
@@ -741,7 +822,14 @@ async def main(page: ft.Page):
                 ruling_question = ruling_content.get("question", "")
                 ruling_answer = ruling_content.get("answer", "")
                 card_id = ruling.get("card_code", "")
-                writer.add_document(card_name=card_name, ruling_text=ruling_text, card_code=card_id, ruling_type=ruling_type, ruling_question=ruling_question, ruling_answer=ruling_answer)
+                writer.add_document(
+                    card_name=card_name,
+                    ruling_text=ruling_text,
+                    card_code=card_id,
+                    ruling_type=ruling_type,
+                    ruling_question=ruling_question,
+                    ruling_answer=ruling_answer,
+                )
 
     search_input_handler = SearchInputController(page, json_data)
 
@@ -760,7 +848,8 @@ async def main(page: ft.Page):
     root_view = ft.View(
         "/",
         [
-            ft.AppBar(title=ft.Text("FAQ This!"), bgcolor=ft.colors.SURFACE_VARIANT),
+            ft.AppBar(title=ft.Text("FAQ This!"),
+                      bgcolor=ft.colors.SURFACE_VARIANT),
             ft.Column(ref=page_content, expand=True, scroll=None),
             search_input,
         ],
@@ -786,52 +875,60 @@ async def main(page: ft.Page):
 
             search_view = SearchView(page, load_json_data())
             search_view = SearchController(page, load_json_data())
-            rulings = await search_view.get_rulings_for_card(page, card_name, card_code, image_binary, card_text)
+            rulings = await search_view.get_rulings_for_card(
+                page, card_name, card_code, image_binary, card_text
+            )
             print(f"{rulings=}")
 
             page.views.append(
                 ft.View(
                     f"/card/{troute.card_name}/{card_code}",
                     [
-                        ft.AppBar(title=ft.Text("Card Details"), bgcolor=ft.colors.SURFACE_VARIANT),
+                        ft.AppBar(title=ft.Text("Card Details"),
+                                  bgcolor=ft.colors.SURFACE_VARIANT),
                         ft.Column(
                             [
-                                ft.Text(card_name, theme_style=ft.TextThemeStyle.HEADLINE_MEDIUM),
+                                ft.Text(
+                                    card_name, theme_style=ft.TextThemeStyle.HEADLINE_MEDIUM),
                                 ft.Row(
                                     [
                                         ft.Column(
-                                            [
-                                                ft.Image(src_base64=image_binary)
-                                            ],
+                                            [ft.Image(
+                                                src_base64=image_binary)],
                                             expand=2,
                                             alignment=ft.MainAxisAlignment.CENTER,
                                             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                                         ),
                                         ft.Column(
                                             [
-                                                ft.Text("Rulings", theme_style=ft.TextThemeStyle.HEADLINE_SMALL,
-                                                        text_align=ft.TextAlign.LEFT),
+                                                ft.Text(
+                                                    "Rulings",
+                                                    theme_style=ft.TextThemeStyle.HEADLINE_SMALL,
+                                                    text_align=ft.TextAlign.LEFT,
+                                                ),
                                                 *rulings,
                                             ],
                                             expand=6,
                                             scroll=ft.ScrollMode.AUTO,
                                         ),
-                                    ], expand=True
+                                    ],
+                                    expand=True,
                                 ),
                             ],
                             expand=True,
                         ),
-                    ]
+                    ],
                 )
             )
         await page.update_async()
 
-    async def view_pop(view):
+    async def view_pop(view) -> None:
         page.views.pop()
         top_view = page.views[-1]
         await page.go_async(top_view.route)
 
-    page.on_route_change = lambda route: asyncio.create_task(route_change(route))
+    page.on_route_change = lambda route: asyncio.create_task(
+        route_change(route))
     page.on_view_pop = lambda view: asyncio.create_task(view_pop(view))
     print("Navigating to route.")
     await page.go_async(page.route)
@@ -844,7 +941,8 @@ logging.info("Starting app.")
 print("Starting app")
 flet_path = os.getenv("FLET_PATH", DEFAULT_FLET_PATH)
 flet_port = int(os.getenv("FLET_PORT", DEFAULT_FLET_PORT))
-app = flet_fastapi.app(main, assets_dir=r"B:\dev\FAQML\assets", web_renderer=ft.WebRenderer.HTML)
+app = flet_fastapi.app(
+    main, assets_dir=r"B:\dev\FAQML\assets", web_renderer=ft.WebRenderer.HTML)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
