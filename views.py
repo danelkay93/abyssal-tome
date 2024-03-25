@@ -1,7 +1,6 @@
 class CardView:
-    def display_card(self, card):
-        ...    # logic to display a card
+    def display_card(self, card) -> None: ...  # logic to display a card
+
 
 class RulingView:
-    def display_ruling(self, ruling):
-        ...# logic to display a ruling
+    def display_ruling(self, ruling) -> None: ...  # logic to display a ruling

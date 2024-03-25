@@ -8,7 +8,6 @@ from pydantic import ValidationError
 
 from scripts.process_new_format import Ruling, RulingType, process_ruling_html
 
-# noqa: S101
 
 def test_process_ruling_html_empty_input() -> None:
     empty_soup = BeautifulSoup("", "html.parser")
@@ -52,8 +51,10 @@ def test_process_ruling_html_combines_q_and_a() -> None:
     "input_html,expected_ruling_types",
     [
         ("<strong>Errata:</strong> Some text.", [RulingType.ERRATA]),
-        ("<strong>Q:</strong> Question? <strong>A:</strong> Answer.", [RulingType.QUESTION]),
-        ("<strong>Clarification:</strong> Clarification text.", [RulingType.CLARIFICATION]),
+        ("<strong>Q:</strong> Question? <strong>A:</strong> Answer.",
+         [RulingType.QUESTION]),
+        ("<strong>Clarification:</strong> Clarification text.",
+         [RulingType.CLARIFICATION]),
     ],
 )
 def test_process_ruling_html_various_types(input_html, expected_ruling_types) -> None:
@@ -67,7 +68,8 @@ def test_process_ruling_html_various_types(input_html, expected_ruling_types) ->
 @given(question=text(), answer=text())
 def test_question_ruling_with_hypothesis(question, answer) -> None:
     with contextlib.suppress(ValidationError):
-        ruling = Ruling(ruling_type=RulingType.QUESTION, question=question, answer=answer)
+        ruling = Ruling(ruling_type=RulingType.QUESTION,
+                        question=question, answer=answer)
         assert ruling.question == question  # noqa: S101
         assert ruling.answer == answer  # noqa: S101
 
@@ -75,8 +77,7 @@ def test_question_ruling_with_hypothesis(question, answer) -> None:
 @given(
     content=lists(text(), min_size=1),
     ruling_type=sampled_from(
-        [RulingType.ERRATA, RulingType.CLARIFICATION, RulingType.NOTE]
-    ),
+        [RulingType.ERRATA, RulingType.CLARIFICATION, RulingType.NOTE]),
 )
 def test_ruling_content_with_hypothesis(content: list[str], ruling_type: RulingType) -> None:
     ruling = Ruling(ruling_type=ruling_type, content=content)

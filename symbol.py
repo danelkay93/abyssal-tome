@@ -40,7 +40,7 @@ def tokenize(state: StateInline, silent: bool) -> bool:
     if end == -1 or (end + 1 < len(state.src) and state.src[end + 1] == "("):
         return False
 
-    symbol_name = state.src[start + 1:end]
+    symbol_name = state.src[start + 1: end]
     if symbol_name not in TAG_TO_LETTER:
         return False
 
@@ -68,13 +68,14 @@ def tokenize(state: StateInline, silent: bool) -> bool:
     return True
 
 
-
 def postProcess(state: StateInline) -> None:
     print("postProcess called")
     print(f"Number of delimiters method 1: {len(state.delimiters)}")
 
     for i, delim in enumerate(state.delimiters):
-        print(f"Delimiter {i}: {delim.marker=}, {delim.length=}, {delim.token=}, {delim.end=}, {delim.open=}, {delim.close=}")
+        print(
+            f"Delimiter {i}: {delim.marker=}, {delim.length=}, {delim.token=}, {delim.end=}, {delim.open=}, {delim.close=}"
+        )
     _postProcess(state, state.delimiters)
 
     # tokens_meta = state.tokens_meta
